@@ -1,97 +1,81 @@
+from preprocess import extract_raw, raw_2_numpy, data_batches
+from layers import Dense, Sigmoid, SoftMax, CostMeanSquared
 import numpy as np
-import csv
 
-raw=[]
-with open('train.csv','r') as csvfile:
-	reader = csv.reader(csvfile)
-	next(reader)
-	for line in reader:
-		raw.append(line)
-
-labels=[]
-raw2 =[]
-for j in range(8000):
-	for i in range(1,785):
-		raw2.append(float(raw[j][i]))
-		labels.append(int(raw[j][0]))
-
-current_label = np.zeros(10)
-for i in range(10):
-	if i == labels[0]:
-		current_label[i] = 1
-
-x=np.zeros([8,784])
-for i in range(8):
-	x[i]=raw2[784*i:784+784*i]
-x=x/255
-#x = np.array(raw2[0+i:784+i])/255
-
-class Layers:
-	def __init__(self,n_inputs,n_neurons):
-		self.weights = np.random.rand(n_inputs, n_neurons)
-		self.biases = np.random.rand(1,n_neurons)
-
-	def forward(self,inputs):
-		self.outputs = np.dot(inputs,self.weights)+self.biases
-
-	def backprop(self):
-		pass
-
-class Sigmoid:
-	def forward(self,input):
-		self.outputs = 1/(1+np.exp(-input))
-	def backward(self,input):
-		self.prime = np.exp(-input)/((1+np.exp(-input))**2)
-
-class SoftMax:
-	def forward(self,input):
-		self.outputs = np.exp(input)/np.sum(np.exp(input), axis=1,keepdims=True)
-	def backward(self,input):
-		self.prime = np.zeros([np.array(input).shape[0],np.array(input).shape[1],np.array(input).shape[1]])
-		for i in range(np.array(input).shape[0]):
-			self.prime[i] = np.array(input[i]).T*np.eye(np.array(input).shape[1])-np.dot(np.array(input).T,np.array(input))
-
-class CostMeanSquared:
-	def forward(self,input,target,length):
-		self.outputs = sum(sum((input - target)**2))/length
-	def backward(self,input,target,length):
-		self.prime = 2*sum(sum(input - target))/length
+### GLOBALS ###
+BATCH_SIZE = 50
+EPOCHS = 1000
+LEARNING_RATE = 0.001
 
 
-'''def SigmoidPrime(x):
-	return np.exp(-x)/((1+np.exp(-x)**2))
+if __name__ == '__main__':
 
-def SoftMaxPrime(x):
-	pass'''
+	rawData, rawLabels = extract_raw()
+	trainingData, labels = raw_2_numpy(rawData, rawLabels)
+	total = trainingData.shape[0]
+	trainingData, labels = data_batches(trainingData, labels, BATCH_SIZE)
 
+	layer1 = Dense(trainingData.shape[2],16)
+	activation1 = Sigmoid()
+	layer2 = Dense(16,10)
+	activation2 = SoftMax()
+	cost = CostMeanSquared()
 
-layer1 = Layers(784,16)
-activation1 = Sigmoid()
+for epoch in range(EPOCHS):
+	print('Epoch: '+str(epoch+1)+'/'+str(EPOCHS))
+	print('')
+	correct = 0
+	for batch in range(total//BATCH_SIZE):
 
-layer2 = Layers(16,16)
-activation2 = Sigmoid()
+		### SOCHASIC GRADIENT DESCENT ###
 
-layer3 = Layers(16,10)
-activation3 = SoftMax()
+		layer1.forward(trainingData[batch])
+		activation1.forward(layer1.outputs)
+		layer2.forward(activation1.outputs)
+		activation2.forward(layer2.outputs)
+		cost.forward(activation2.outputs,labels[batch],10)
 
-cost = CostMeanSquared()
+		for sample in range(activation2.outputs.shape[1]):
+			if np.argmax(activation2.outputs[:,sample]) == np.argmax(labels[batch,sample]):
+				correct +=1
 
-layer1.forward(x)
-activation1.forward(layer1.outputs)
+		cost.backward(activation2.outputs,labels[batch],10)
+		activation2.backward(layer2.outputs,layer2.weights.shape[0],BATCH_SIZE)
+		layer2.backward(activation1.outputs)
+		activation1.backward(layer1.outputs)
+		layer1.backward(trainingData[batch])
 
-layer2.forward(activation1.outputs)
-activation2.forward(layer2.outputs)
+		delta1 = np.zeros((cost.prime.shape[0],cost.prime.shape[1]))
+		for i in range(cost.prime.shape[0]):
+			delta1[i] = np.matmul(cost.prime[i], activation2.prime[i])
 
-layer3.forward(activation2.outputs)
-activation3.forward(layer3.outputs)
+		delta1_wrt_L2 = np.matmul(delta1, layer2.input_prime)
+		delta2 = np.zeros((activation1.prime.shape[0],activation1.prime.shape[2]))
+		for i in range(activation1.prime.shape[2]):
+			delta2[:,i] = np.matmul(delta1_wrt_L2[i],activation1.prime[:,:,i])
 
-cost.forward(activation3.outputs,current_label,10)
+		C_wrt_W2 = np.zeros((delta1.shape[0],delta1.shape[1],layer2.weights_prime.shape[1]))
+		for i in range(delta1.shape[0]):
+			C_wrt_W2[i] = np.outer(delta1[i], layer2.weights_prime[i])
+		C_wrt_W2 = np.sum(C_wrt_W2,axis=0)/BATCH_SIZE
 
-y=SoftMax()
-y.backward(activation3.outputs)
+		C_wrt_B2 = delta1
+		C_wrt_B2 = np.sum(C_wrt_B2, axis = 0)/BATCH_SIZE
+		C_wrt_B2 = np.array([C_wrt_B2])
 
-print(cost.outputs)
-print(activation3.outputs)
-print(y.prime)
+		C_wrt_W1 = np.zeros((delta2.shape[1],delta2.shape[0],layer1.weights_prime.shape[1]))
+		for i in range(delta2.shape[1]):
+			C_wrt_W1[i] = np.outer(delta2[:,i], layer1.weights_prime[i])
+		C_wrt_W1 = np.sum(C_wrt_W1,axis = 0)/BATCH_SIZE
 
+		C_wrt_B1 = delta2
+		C_wrt_B1 = np.sum(C_wrt_B1, axis = 1)/BATCH_SIZE
+		C_wrt_B1 = np.array([C_wrt_B1])
 
+		layer1.weights -= LEARNING_RATE*(C_wrt_W1)
+		layer2.weights -= LEARNING_RATE*(C_wrt_W2)
+		layer1.biases -= LEARNING_RATE*(C_wrt_B1.T)
+		layer2.biases -= LEARNING_RATE*(C_wrt_B2.T)
+
+	print('Loss: {:<20.9f}Accuracy: {:<20.9f}'.format(cost.outputs,correct/total))
+	print('')
